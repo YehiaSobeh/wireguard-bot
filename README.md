@@ -93,3 +93,4 @@ Run backend as root or ensure it has permission to access /root/wg0-client-*.con
 You can change storage paths in WIREGUARD_SCRIPT_PATH and main.py.
 
 Logs are stored directly in console output via Python’s logging.
+<!-- [link](https://chatgpt.com/c/68eedb18-1c04-8330-93c5-0c57c5) -->
