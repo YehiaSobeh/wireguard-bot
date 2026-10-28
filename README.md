@@ -1,96 +1,90 @@
 # wireguard-bot
-🛡️ WireGuard Manager Bot
 
-A complete automation system to manage WireGuard VPN clients via a Telegram bot.
-Built with FastAPI, Python-Telegram-Bot, SQLAlchemy, and Bash scripting.
+Self-hosted WireGuard VPN management through Telegram. A user sends `/create 30`, the bot asks a FastAPI backend to provision a WireGuard client, and the user gets back a `.conf` file and a QR code to scan. A scheduler removes expired clients automatically.
 
-🚀 Features
+Built with FastAPI, python-telegram-bot, SQLAlchemy, APScheduler, and Bash, running entirely on your own Linux server. No third-party VPN service, no manual `wg` commands.
 
-✅ Create VPN clients directly from Telegram
-✅ Auto-generate .conf and QR code for easy import
-✅ Track users and clients in database
-✅ Automatic expiration cleanup
-✅ Lightweight, fast, and works entirely on your server
+## Why it matters
 
-🧩 System Architecture
-Telegram User ─▶ Telegram Bot ─▶ FastAPI Backend ─▶ WireGuard Script
-                                  │
-                                  ├── SQLite DB (User + Client)
-                                  └── QR Code Generator
+Running a personal or small-team VPN usually means SSH-ing into the server for every new device and never cleaning up old peers. This bot turns provisioning into a chat command and makes expiry the default, so stale peers do not accumulate.
 
-📦 Requirements
+![Bot conversation](docs/demo.png)
+*[ADD SCREENSHOT: docs/demo.png, the Telegram conversation showing /create and the returned QR code]*
 
-Linux with root access
+## Architecture
 
-WireGuard installed
+```
+Telegram user ──▶ Telegram bot (bot.py) ──▶ FastAPI backend (main.py) ──▶ wireguard-install.sh
+                                                  │
+                                                  ├── SQLite via SQLAlchemy (users, clients, expiry)
+                                                  ├── QR code generator (qrcode)
+                                                  └── scheduler.py: hourly cleanup of expired clients
+```
 
-Python 3.9+
+## Tech stack
 
-Telegram Bot Token
+| Component | Technology |
+|---|---|
+| Backend API | FastAPI, Pydantic |
+| Bot | python-telegram-bot |
+| Database | SQLite + SQLAlchemy |
+| Provisioning | Bash (WireGuard install script) |
+| Scheduler | APScheduler |
+| QR codes | qrcode |
 
-⚙️ Installation
-1️⃣ Clone and setup
+## Requirements
+
+- Linux server with root access and WireGuard installed
+- Python 3.9+
+- A Telegram bot token from @BotFather
+
+## How to run
+
+```bash
 cd /opt/wireguard-server/
 git clone git@github.com:YehiaSobeh/wireguard-bot.git
-cd wireguard-bot
-
-2️⃣ Install dependencies
+cd wireguard-bot/src
 pip install -r requirements.txt
+```
 
-3️⃣ Set config
+Create `config.py`:
 
-Create config.py:
-
+```python
 TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-WIREGUARD_SCRIPT_PATH = "/opt/wireguard-server/wireguard-bot/wireguard-install.sh"
+WIREGUARD_SCRIPT_PATH = "/opt/wireguard-server/wireguard-bot/src/wireguard-install.sh"
+```
 
-4️⃣ Start the backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+Start the three processes (as root, or as a user that can read `/root/wg0-client-*.conf`):
 
-5️⃣ Start the Telegram bot
-python3 bot.py
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000     # backend
+python3 bot.py                                   # Telegram bot
+python3 -c "from scheduler import start_scheduler; start_scheduler()"   # optional cleanup
+```
 
-6️⃣ (Optional) Start scheduler
-from scheduler import start_scheduler
-start_scheduler()
+For a permanent install, wrap each process in a systemd unit.
 
-💬 Bot Commands
-Command	Description
-/start	Show welcome/help message
-/create <days>	Create new VPN client valid for <days> days
-🧠 How It Works
+## Bot commands
 
-User requests client → bot sends request to FastAPI.
+| Command | Description |
+|---|---|
+| `/start` | Welcome and help |
+| `/create <days>` | Create a new VPN client valid for `<days>` days |
 
-FastAPI calls wireguard-install.sh → new config generated.
+## How it works
 
-FastAPI reads config → generates QR → saves in DB.
+1. The bot forwards the request to `POST /create_client` with the Telegram ID, username, and duration.
+2. The backend creates or finds the user, runs the WireGuard script to generate a new peer, reads the resulting config, renders a QR code, and stores the client with its expiry date.
+3. The bot sends the config file and QR image back to the user.
+4. Every hour the scheduler removes clients past their expiry from WireGuard and marks them inactive.
 
-Bot sends config + QR back to user.
+## Security notes
 
-📅 Expiration Handling
+- The backend executes a shell script as root. Keep it bound to localhost or a private interface and do not expose port 8000 publicly.
+- Config files contain private keys. They are deleted from disk after being sent.
+- [ADD: whether the bot restricts who may call /create, e.g. an allowlist of Telegram IDs]
 
-A background scheduler (scheduler.py) runs every hour:
+## What I learned
 
-Checks expired clients.
-
-Removes them using the WireGuard script.
-
-Marks them inactive in the DB.
-
-🧰 Technologies Used
-Component	Tech
-Backend API	FastAPI
-Bot	Python-Telegram-Bot
-Database	SQLite + SQLAlchemy
-Automation	Bash (WireGuard script)
-Scheduler	APScheduler
-QR Generator	qrcode Python library
-🧑‍💻 Developer Notes
-
-Run backend as root or ensure it has permission to access /root/wg0-client-*.conf.
-
-You can change storage paths in WIREGUARD_SCRIPT_PATH and main.py.
-
-Logs are stored directly in console output via Python’s logging.
-<!-- [link](https://chatgpt.com/c/68eedb18-1c04-8330-93c5-0c57c5) -->
+- Driving a system tool from a web service means thinking about the process boundary: exit codes, file paths, and permissions are the API.
+- Expiry as a first-class field, with a cleanup loop, is what makes the system safe to leave running.
